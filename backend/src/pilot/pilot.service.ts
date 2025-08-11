@@ -1,16 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { PilotRepository, FlightKey } from './pilot.repository';
+import { PilotRepository, FlightKey, FdrTick } from './pilot.repository';
 
-type Tick = ReturnType<PilotRepository['loadFlight']> extends (infer R)[] ? R : never;
 type SessionKey = string;
 const keyOf = (k: FlightKey): SessionKey => `${k.flightNumber}:${k.date}`;
 
 type Session = {
   key: SessionKey;
-  data: Tick[];
+  data: FdrTick[];
   idx: number;
   playing: boolean;
-  rate: number;        // 1 = real-time, 2 = 2x, etc.
+  rate: number;          // 1 = realtime, 2 = 2x ...
   timer?: NodeJS.Timeout;
 };
 
@@ -21,25 +20,22 @@ export class PilotService {
 
   constructor(private readonly repo: PilotRepository) {}
 
-  private async ensureSession(k: FlightKey) {
-    const key = keyOf(k);
-    let s = this.sessions.get(key);
-    if (!s) {
-      const data = await this.repo.loadFlight(k);
-      s = { key, data, idx: 0, playing: false, rate: 1 };
-      this.sessions.set(key, s);
-    }
+  private async ensureSession(k: FlightKey): Promise<Session> {
+    const existing = this.sessions.get(keyOf(k));
+    if (existing) return existing;
+
+    const data = await this.repo.loadFlight(k);
+    const s: Session = { key: keyOf(k), data, idx: 0, playing: false, rate: 1 };
+    this.sessions.set(s.key, s);
     return s;
   }
 
-  private scheduleNext(s: Session, onTick: (t: Tick) => void) {
+  private scheduleNext(s: Session, onTick: (t: FdrTick) => void) {
     if (!s.playing) return;
 
     const cur = s.data[s.idx];
     const next = s.data[s.idx + 1];
-    const delay = next
-      ? Math.max(10, Math.floor((next.ts - cur.ts) / s.rate))
-      : 0;
+    const delay = next ? Math.max(10, Math.floor((next.ts - cur.ts) / s.rate)) : 0;
 
     s.timer = setTimeout(() => {
       if (!s.playing) return;
@@ -65,7 +61,7 @@ export class PilotService {
     };
   }
 
-  async resume(k: FlightKey, onTick: (t: Tick) => void) {
+  async resume(k: FlightKey, onTick: (t: FdrTick) => void) {
     const s = await this.ensureSession(k);
     if (s.playing || !s.data.length) return;
     s.playing = true;
@@ -83,18 +79,17 @@ export class PilotService {
   async setRate(k: FlightKey, rate: number) {
     const s = await this.ensureSession(k);
     s.rate = Math.max(0.1, rate);
-    // If playing, restart timing at new rate
     if (s.playing) {
       await this.pause(k);
-      await this.resume(k, () => {});
+      await this.resume(k, () => { /* will rearm via gateway */ });
     }
     return { rate: s.rate };
   }
 
-  /** Seek by seconds relative to current point */
   async seekSeconds(k: FlightKey, seconds: number) {
     const s = await this.ensureSession(k);
     if (!s.data.length) return this.snapshot(k);
+
     const target = (s.data[s.idx]?.ts ?? s.data[0].ts) + seconds * 1000;
 
     // binary search by ts
@@ -108,7 +103,6 @@ export class PilotService {
     return this.snapshot(k);
   }
 
-  /** Seek by N records (negative = backward) */
   async seekPoints(k: FlightKey, delta: number) {
     const s = await this.ensureSession(k);
     s.idx = Math.max(0, Math.min(s.data.length - 1, s.idx + delta));
