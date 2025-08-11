@@ -76,9 +76,16 @@ function useSocketPlayer(key: FlightKey) {
       appendPoint(ns.point || undefined);
     });
 
-    s.on('telemetry:tick', (t: { idx: number; total: number; point: FdrPoint }) => {
-      setSnap(prev => prev ? { ...prev, idx: t.idx, total: t.total, playing: true, point: t.point } : null);
-      appendPoint(t.point);
+    s.on('telemetry:tick', (payload: any) => {
+      // Accept both shapes: { idx, total, point } OR just FdrPoint
+      const point: FdrPoint | null = payload?.point ?? payload ?? null;
+      setSnap(prev => {
+        if (!prev) return prev; // keep null until we have a snapshot
+        const nextIdx = typeof payload?.idx === 'number' ? payload.idx : (prev.idx + 1);
+        const nextTotal = typeof payload?.total === 'number' ? payload.total : prev.total;
+        return { ...prev, idx: nextIdx, total: nextTotal, playing: true, point };
+      });
+      appendPoint(point);
     });
 
     return () => {
