@@ -108,4 +108,10 @@ export class PilotService {
     s.idx = Math.max(0, Math.min(s.data.length - 1, s.idx + delta));
     return this.snapshot(k);
   }
+  async getPath(k: FlightKey) {
+  const s = await this.ensureSession(k); // ensures data is loaded
+  return s.data
+    .filter(p => p.latitude != null && p.longitude != null)
+    .map(p => ({ lat: p.latitude!, lon: p.longitude!, id: p.id, ts: p.ts }));
+}
 }

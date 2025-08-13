@@ -8,13 +8,19 @@ export class PilotGateway {
   @WebSocketServer() server: Server;
   constructor(private readonly pilot: PilotService) {}
 
-  @SubscribeMessage('join')
-  async join(@ConnectedSocket() client: Socket, @MessageBody() key: FlightKey) {
-    const room = `${key.flightNumber}:${key.date}`;
-    await client.join(room);
-    client.emit('telemetry:snapshot', await this.pilot.snapshot(key));
-    return { ok: true };
-  }
+@SubscribeMessage('join')
+async join(@ConnectedSocket() client: Socket, @MessageBody() key: FlightKey) {
+  const room = `${key.flightNumber}:${key.date}`;
+  await client.join(room);
+
+  // send static path once
+  const path = await this.pilot.getPath(key);
+  client.emit('telemetry:path', { path, total: path.length });
+
+  // send current snapshot
+  client.emit('telemetry:snapshot', await this.pilot.snapshot(key));
+  return { ok: true };
+}
 
   @SubscribeMessage('player:resume')
   async resume(@MessageBody() key: FlightKey) {
