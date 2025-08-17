@@ -232,7 +232,39 @@ export class PilotService {
     s.idx = Math.max(0, Math.min(s.data.length - 1, s.idx + delta));
     return this.snapshot(k);
   }
+  private toTs(date: number, utc?: string | null): number {
+    const y = Math.floor(date / 10000);
+    const m = Math.floor((date % 10000) / 100);
+    const d = date % 100;
+    let hh = 0, mm = 0, ss = 0;
+    if (utc) {
+      const mtx = /^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/.exec(utc);
+      if (mtx) {
+        hh = Number(mtx[1]) || 0;
+        mm = Number(mtx[2]) || 0;
+        ss = Number(mtx[3]) || 0;
+      }
+    }
+    return Date.UTC(y, m - 1, d, hh, mm, ss);
+  }
 
+  /**
+   * Minimal path for polyline/chart: only ts, lat, lon
+   */
+  async getPathMin({ flightNumber, date }: GetPathParams): Promise<Array<{ ts: number; lat: number | null; lon: number | null }>> {
+    const rows = await this.repo.find({
+      where: { flightNumber, date },
+      order: { id: 'ASC' },
+      // only fetch what's needed to build the response
+      select: ['date', 'utcTime', 'latitude', 'longitude'],
+    });
+
+    return rows.map((r) => ({
+      ts: this.toTs(r.date, r.utcTime),
+      lat: r.latitude == null ? null : Number(r.latitude),
+      lon: r.longitude == null ? null : Number(r.longitude),
+    }));
+  }
   // ---------- HTTP API ----------
   async getPath({ flightNumber, date }: GetPathParams) {
     const fn = (flightNumber ?? '').trim();
