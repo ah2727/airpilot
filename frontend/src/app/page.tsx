@@ -442,7 +442,18 @@ export default function FlightReplayPage() {
 
   const idx = snap?.idx ?? 0;
   const total = snap?.total ?? 0;
-
+  function FlapNumber({ value }: { value?: number | null }) {
+    // show a numeric value; fallback to 0 if missing
+    const v = value == null ? 0 : Number(value);
+    return (
+      <div className="p-2 border border-amber-200 bg-amber-50 rounded-md">
+        <div className="text-xs font-medium text-slate-700">Flap Position</div>
+        <div className="mt-1 px-2 py-1 rounded-lg border bg-white text-slate-900">
+          <span className="text-sm font-semibold tabular-nums">{v}</span>
+        </div>
+      </div>
+    );
+  }
   function computeTs(date: number, utcTime?: string) {
     const y = Math.floor(date / 10000);
     const m = Math.floor((date % 10000) / 100);
@@ -745,6 +756,7 @@ export default function FlightReplayPage() {
                 trueText="1" // 1 = AIR (if that's how your backend encodes it)
                 falseText="0" // 0 = GROUND
               />
+              <FlapNumber value={planeCurrent?.flapPosition} />
             </div>
           </div>
         </section>
