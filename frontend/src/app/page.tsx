@@ -454,6 +454,90 @@ export default function FlightReplayPage() {
       </div>
     );
   }
+
+  // Put this near RateSelect
+  function TimelineSlider({
+    idx,
+    total,
+    playing,
+    actions,
+  }: {
+    idx: number;
+    total: number;
+    playing: boolean;
+    actions: {
+      seekIdx: (i: number) => void;
+      pause: () => void;
+      resume: () => void;
+    };
+  }) {
+    const [local, setLocal] = React.useState(idx);
+    const [scrubbing, setScrubbing] = React.useState(false);
+    const wasPlayingRef = React.useRef(false);
+    const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+      null
+    );
+
+    // keep slider in sync when not scrubbing
+    React.useEffect(() => {
+      if (!scrubbing) setLocal(idx);
+    }, [idx, scrubbing]);
+
+    const commit = React.useCallback(
+      (value: number) => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        // commit once user pauses movement for 120ms
+        debounceRef.current = setTimeout(() => {
+          actions.seekIdx(value);
+        }, 120);
+      },
+      [actions]
+    );
+
+    const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const v = Number(e.target.value);
+      setLocal(v);
+      commit(v);
+    };
+
+    const onPointerDown = () => {
+      setScrubbing(true);
+      wasPlayingRef.current = playing;
+      if (playing) actions.pause(); // pause streaming while scrubbing
+    };
+
+    const onPointerUp = () => {
+      setScrubbing(false);
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      actions.seekIdx(local); // final commit on release
+      if (wasPlayingRef.current) actions.resume();
+    };
+
+    // Reduce event spam for very long flights (~1000 steps max)
+    const step = Math.max(1, Math.floor(total / 1000));
+
+    return (
+      <input
+        type="range"
+        min={0}
+        max={Math.max(0, total - 1)}
+        step={step}
+        value={scrubbing ? local : idx}
+        onChange={onChange}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onMouseDown={onPointerDown}
+        onMouseUp={onPointerUp}
+        onTouchStart={onPointerDown}
+        onTouchEnd={onPointerUp}
+        className="w-full"
+      />
+    );
+  }
+
   function computeTs(date: number, utcTime?: string) {
     const y = Math.floor(date / 10000);
     const m = Math.floor((date % 10000) / 100);
@@ -685,14 +769,17 @@ export default function FlightReplayPage() {
 
             {/* Timeline slider (socket-backed) */}
             <div className="mt-3 flex items-center gap-3">
-              <input
-                type="range"
-                min={0}
-                max={Math.max(0, total - 1)}
-                value={idx}
-                onChange={(e) => actions.seekIdx(Number(e.target.value))}
-                className="w-full"
+              <TimelineSlider
+                idx={idx}
+                total={total}
+                playing={!!snap?.playing}
+                actions={{
+                  seekIdx: actions.seekIdx,
+                  pause: actions.pause,
+                  resume: actions.resume,
+                }}
               />
+
               <div className="text-xs text-slate-600 w-28 text-right">
                 {idx + 1} / {total || 0}
               </div>
