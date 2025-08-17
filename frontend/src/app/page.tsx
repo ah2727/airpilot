@@ -27,6 +27,8 @@ import {
   TurnCoordinator,
   Variometer,
 } from "react-flight-indicators";
+import 'leaflet/dist/leaflet.css'; // ⬅️ import globally here
+
 // ---- Types ----
 export type FlightKey = { flightNumber: string; date: number };
 export type FdrPoint = {
@@ -156,8 +158,6 @@ function useSocketPlayer(key: FlightKey) {
 
   return { snap, points, actions } as const;
 }
-
-// ---- Map (Leaflet loaded only on client) ----
 function TrackMap({
   points,
   current,
@@ -165,13 +165,56 @@ function TrackMap({
   points: FdrPoint[];
   current?: FdrPoint | null;
 }) {
+  // --- Stable hooks (always called) ---
   const [ready, setReady] = useState(false);
+
+  const path: [number, number][] = useMemo(
+    () =>
+      points
+        .filter((p) => p.latitude != null && p.longitude != null)
+        .map((p) => [p.latitude!, p.longitude!]),
+    [points]
+  );
+
+  const startRef = useRef<[number, number] | null>(null);
+  const endRef   = useRef<[number, number] | null>(null);
+  const mapRef   = useRef<any>(null);
+  const fittedRef = useRef(false);
+
+  // set start once, end keeps latest seen
   useEffect(() => {
-    (async () => {
-      await import("leaflet/dist/leaflet.css");
-      setReady(true);
-    })();
-  }, []);
+    if (!startRef.current && points.length > 0) {
+      const first = points.find(p => p.latitude != null && p.longitude != null);
+      if (first) startRef.current = [first.latitude!, first.longitude!];
+    }
+    if (points.length > 0) {
+      const last = [...points].reverse().find(p => p.latitude != null && p.longitude != null);
+      if (last) endRef.current = [last.latitude!, last.longitude!];
+    }
+  }, [points.length]);
+
+  // load CSS once
+useEffect(() => {
+  setReady(true);
+}, []);
+
+  // fit bounds once when map is ready
+  useEffect(() => {
+    if (!ready || !mapRef.current || fittedRef.current) return;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const L = require("leaflet");
+    const pts = path.length >= 2 ? path : startRef.current ? [startRef.current] : [];
+    if (pts.length >= 2) {
+      const bounds = L.latLngBounds(pts as any);
+      mapRef.current.fitBounds(bounds.pad(0.2));
+    } else if (startRef.current) {
+      mapRef.current.setView(startRef.current as any, 6);
+    }
+    fittedRef.current = true;
+  }, [ready, path.length]);
+
+  const center =
+    startRef.current ?? (path[0] as [number, number]) ?? ([25, 55] as const);
 
   if (!ready || typeof window === "undefined") {
     return (
@@ -181,81 +224,143 @@ function TrackMap({
     );
   }
 
-  // require after CSS is in
+  // require after client-only guard
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const RL = require("react-leaflet");
-  const { MapContainer, TileLayer, Polyline, CircleMarker, useMap } = RL;
+  const { MapContainer, TileLayer, Polyline, Marker } = RL;
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const L = require("leaflet");
 
-  const center = points.length
-    ? [
-        points[points.length - 1].latitude!,
-        points[points.length - 1].longitude!,
-      ]
-    : [25, 55];
-  const path = points
-    .filter((p) => p.latitude != null && p.longitude != null)
-    .map((p) => [p.latitude!, p.longitude!]);
+  const planeIcon = (headingDeg: number) =>
+    L.divIcon({
+      className: "plane-icon",
+      html: `<div style="
+          width:24px;height:24px;line-height:24px;text-align:center;
+          transform: rotate(${headingDeg}deg);transform-origin:50% 50%;
+          font-size:22px;user-select:none;">✈️</div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
 
-  function FitBounds() {
-    const map = useMap();
-    useEffect(() => {
-      if (path.length >= 2) {
-        // @ts-ignore
-        const L = require("leaflet");
-        const bounds = L.latLngBounds(path);
-        map.fitBounds(bounds.pad(0.2));
-      } else if (center) {
-        map.setView(center as any, 6);
-      }
-    }, [path.length]);
-    return null;
-  }
+  const pin = (label: string) =>
+    L.divIcon({
+      className: "pin",
+      html: `<div style="
+          background:white;border:2px solid #334155;border-radius:9999px;
+          width:14px;height:14px;box-shadow:0 1px 4px rgba(0,0,0,.3)"
+          title="${label}"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+    });
 
   return (
     <MapContainer
       center={center as any}
       zoom={5}
       className="h-[420px] w-full rounded-2xl overflow-hidden"
+      whenCreated={(m) => (mapRef.current = m)}
     >
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution="&copy; OpenStreetMap"
+        attribution="© OpenStreetMap"
       />
-      <FitBounds />
+
       {path.length > 1 && <Polyline positions={path as any} />}
-      {points[0] && (
-        <CircleMarker
-          center={[points[0].latitude!, points[0].longitude!]}
-          radius={8}
-        />
+
+      {startRef.current && (
+        <Marker position={startRef.current as any} icon={pin("Begin")} />
       )}
+      {endRef.current && (
+        <Marker position={endRef.current as any} icon={pin("End")} />
+      )}
+
       {current && current.latitude != null && current.longitude != null && (
-        <CircleMarker
-          center={[current.latitude, current.longitude]}
-          radius={10}
+        <Marker
+          position={[current.latitude, current.longitude] as any}
+          icon={planeIcon(current.magHeading ?? 0)}
         />
       )}
     </MapContainer>
   );
 }
 
+// Fetch persisted/static path for a flight/date (runs on each refresh)
+function useStaticPath(key: FlightKey) {
+  const [staticPoints, setStaticPoints] = useState<FdrPoint[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const url = `${API_URL}/pilot/path?flightNumber=${encodeURIComponent(
+          key.flightNumber
+        )}&date=${key.date}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        const arr = (json?.path ?? json ?? []) as any[];
+
+        const pts: FdrPoint[] = arr
+          .filter((p) => p && p.latitude != null && p.longitude != null)
+          .map((p, i) => ({
+            ...p,
+            // ensure id exists for dedupe; keep server id if present
+            id: p.id ?? i,
+          }));
+
+        if (!cancelled) setStaticPoints(pts);
+      } catch (e) {
+        console.error("Failed to fetch static path:", e);
+        if (!cancelled) setStaticPoints([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [key.flightNumber, key.date]);
+
+  return staticPoints;
+}
+
+// Merge two arrays of points by id (keeps order: first static, then live)
+function mergeById(a: FdrPoint[], b: FdrPoint[]) {
+  const seen = new Set<number | string>();
+  const out: FdrPoint[] = [];
+  for (const p of [...a, ...b]) {
+    const k = p.id ?? `${p.ts}-${p.latitude}-${p.longitude}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
 // ---- Main page ----
 export default function FlightReplayPage() {
+  
   // You can override via URL query (?flight=122&date=20250324)
   const [flightNumber, setFlightNumber] = useState("122");
   const [date, setDate] = useState(20250324);
+  
 
   const key = useMemo<FlightKey>(
     () => ({ flightNumber, date }),
     [flightNumber, date]
   );
-  const { snap, points, actions } = useSocketPlayer(key);
+  const staticPoints = useStaticPath(key);
+
+  // Existing live stream
+  const { snap, points: livePoints, actions } = useSocketPlayer(key);
+
+  // Merge persisted + live, dedup by id
+  const points = useMemo(
+    () => mergeById(staticPoints, livePoints),
+    [staticPoints, livePoints]
+  );
 
   const idx = snap?.idx ?? 0;
   const total = snap?.total ?? 0;
   const current = snap?.point ?? null;
 
-  // Data for chart
   const chartData = useMemo(
     () =>
       points.map((p) => ({
@@ -265,6 +370,7 @@ export default function FlightReplayPage() {
       })),
     [points]
   );
+
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
