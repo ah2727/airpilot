@@ -1,32 +1,17 @@
-"use client";
+// app/flight-replay/page.tsx
+'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Play,
-  Pause,
-  Rewind,
-  FastForward,
-  Gauge,
-  Map as MapIcon,
+  Play, Pause, Rewind, FastForward, Gauge, Map as MapIcon, RefreshCw, Loader2
 } from "lucide-react";
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  ReferenceLine,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine,
 } from "recharts";
 import { io, Socket } from "socket.io-client";
 import {
-  Airspeed,
-  Altimeter,
-  AttitudeIndicator,
-  HeadingIndicator,
-  Variometer,
-} from "react-flight-indicators";
+  Airspeed, Altimeter, AttitudeIndicator, HeadingIndicator, Variometer,
+} from "react-typescript-flight-indicators";
 import "leaflet/dist/leaflet.css";
 
 // ---- Types ----
@@ -86,23 +71,18 @@ function useSocketPlayer(key: FlightKey) {
   const [points, setPoints] = useState<FdrPoint[]>([]);
   const socketRef = useRef<Socket | null>(null);
   const keyRef = useRef(key);
-
-  // only auto-seek once per flight/date
   const didResetToStartRef = useRef(false);
 
   useEffect(() => {
     keyRef.current = key;
-    didResetToStartRef.current = false; // reset on flight/date change
-    setPoints([]); // clear local points when flight changes
+    didResetToStartRef.current = false;
+    setPoints([]);
     setSnap(null);
   }, [key]);
 
   const appendPoint = (p?: FdrPoint | null) => {
     if (!p || p.latitude == null || p.longitude == null) return;
-    setPoints((prev) => {
-      if (prev.length && prev[prev.length - 1].id === p.id) return prev;
-      return [...prev, p];
-    });
+    setPoints((prev) => (prev.length && prev[prev.length - 1].id === p.id ? prev : [...prev, p]));
   };
 
   useEffect(() => {
@@ -114,33 +94,15 @@ function useSocketPlayer(key: FlightKey) {
     });
 
     s.on("telemetry:snapshot", (ns: Snapshot) => {
-      // If server boots us in the middle, immediately seek to start and re-join to get a fresh snapshot
-      if (
-        !didResetToStartRef.current &&
-        typeof ns.idx === "number" &&
-        ns.idx > 0
-      ) {
-        // set UI idx=0 right away (point stays as-is until fresh snapshot arrives)
+      if (!didResetToStartRef.current && typeof ns.idx === "number" && ns.idx > 0) {
         setSnap((prev) =>
-          prev
-            ? {
-                ...prev,
-                idx: 0,
-                total: ns.total,
-                playing: ns.playing,
-                rate: ns.rate,
-              }
-            : { ...ns, idx: 0 }
+          prev ? { ...prev, idx: 0, total: ns.total, playing: ns.playing, rate: ns.rate } : { ...ns, idx: 0 }
         );
-        // jump back to beginning
         s.emit("player:seekPoints", { ...keyRef.current, points: -ns.idx });
-        // ask server for snapshot again using existing "join"
         s.emit("join", keyRef.current);
         didResetToStartRef.current = true;
-        return; // IMPORTANT: don't append the stale end-point
+        return;
       }
-
-      // Normal path: accept snapshot as current plane position
       setSnap(ns);
       appendPoint(ns.point || undefined);
     });
@@ -149,17 +111,9 @@ function useSocketPlayer(key: FlightKey) {
       const point: FdrPoint | null = payload?.point ?? payload ?? null;
       setSnap((prev) => {
         if (!prev) return prev;
-        const nextIdx =
-          typeof payload?.idx === "number" ? payload.idx : prev.idx + 1;
-        const nextTotal =
-          typeof payload?.total === "number" ? payload.total : prev.total;
-        return {
-          ...prev,
-          idx: nextIdx,
-          total: nextTotal,
-          playing: true,
-          point,
-        };
+        const nextIdx = typeof payload?.idx === "number" ? payload.idx : prev.idx + 1;
+        const nextTotal = typeof payload?.total === "number" ? payload.total : prev.total;
+        return { ...prev, idx: nextIdx, total: nextTotal, playing: true, point };
       });
       appendPoint(point);
     });
@@ -170,30 +124,17 @@ function useSocketPlayer(key: FlightKey) {
     };
   }, []);
 
-  const actions = useMemo(
+  const actions = React.useMemo(
     () => ({
       resume: () => socketRef.current?.emit("player:resume", keyRef.current),
-      pause: () => socketRef.current?.emit("player:pause", keyRef.current),
-      back5: () =>
-        socketRef.current?.emit("player:seekSeconds", {
-          ...keyRef.current,
-          seconds: -5,
-        }),
-      fwd5: () =>
-        socketRef.current?.emit("player:seekSeconds", {
-          ...keyRef.current,
-          seconds: +5,
-        }),
-      setRate: (rate: number) =>
-        socketRef.current?.emit("player:setRate", { ...keyRef.current, rate }),
-      seekIdx: (idx: number) => {
+      pause:  () => socketRef.current?.emit("player:pause", keyRef.current),
+      back5:  () => socketRef.current?.emit("player:seekSeconds", { ...keyRef.current, seconds: -5 }),
+      fwd5:   () => socketRef.current?.emit("player:seekSeconds", { ...keyRef.current, seconds: +5 }),
+      setRate:(rate: number) => socketRef.current?.emit("player:setRate", { ...keyRef.current, rate }),
+      seekIdx:(idx: number) => {
         if (!snap) return;
         const delta = idx - snap.idx;
-        socketRef.current?.emit("player:seekPoints", {
-          ...keyRef.current,
-          points: delta,
-        });
-        // also re-join to force an immediate snapshot at the new index
+        socketRef.current?.emit("player:seekPoints", { ...keyRef.current, points: delta });
         socketRef.current?.emit("join", keyRef.current);
       },
     }),
@@ -208,21 +149,19 @@ function TrackMap({
   pathPoints,
   current,
 }: {
-  pathPoints: FdrPoint[]; // polyline + pins source (API)
-  current?: FdrPoint | null; // plane source (SOCKET)
+  pathPoints: FdrPoint[];
+  current?: FdrPoint | null;
 }) {
   const [ready, setReady] = useState(false);
 
-  // Polyline path from API only
   const path: [number, number][] = useMemo(
     () =>
-      pathPoints
+      (pathPoints ?? [])
         .filter((p) => p.latitude != null && p.longitude != null)
         .map((p) => [p.latitude!, p.longitude!]),
     [pathPoints]
   );
 
-  // Begin/End from API path
   const startRef = useRef<[number, number] | null>(null);
   const endRef = useRef<[number, number] | null>(null);
   const mapRef = useRef<any>(null);
@@ -230,29 +169,22 @@ function TrackMap({
 
   useEffect(() => {
     if (!startRef.current && pathPoints.length > 0) {
-      const first = pathPoints.find(
-        (p) => p.latitude != null && p.longitude != null
-      );
+      const first = pathPoints.find((p) => p.latitude != null && p.longitude != null);
       if (first) startRef.current = [first.latitude!, first.longitude!];
     }
     if (pathPoints.length > 0) {
-      const last = [...pathPoints]
-        .reverse()
-        .find((p) => p.latitude != null && p.longitude != null);
+      const last = [...pathPoints].reverse().find((p) => p.latitude != null && p.longitude != null);
       if (last) endRef.current = [last.latitude!, last.longitude!];
     }
-  }, [pathPoints.length]);
+  }, [pathPoints.length, pathPoints]);
 
-  useEffect(() => {
-    setReady(true);
-  }, []);
+  useEffect(() => setReady(true), []);
 
   useEffect(() => {
     if (!ready || !mapRef.current || fittedRef.current) return;
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const L = require("leaflet");
-    const pts =
-      path.length >= 2 ? path : startRef.current ? [startRef.current] : [];
+    const pts = path.length >= 2 ? path : startRef.current ? [startRef.current] : [];
     if (pts.length >= 2) {
       const bounds = L.latLngBounds(pts as any);
       mapRef.current.fitBounds(bounds.pad(0.2));
@@ -260,10 +192,9 @@ function TrackMap({
       mapRef.current.setView(startRef.current as any, 6);
     }
     fittedRef.current = true;
-  }, [ready, path.length]);
+  }, [ready, path]);
 
-  const center =
-    startRef.current ?? (path[0] as [number, number]) ?? ([25, 55] as const);
+  const center = startRef.current ?? (path[0] as [number, number]) ?? ([25, 55] as const);
 
   if (!ready || typeof window === "undefined") {
     return (
@@ -273,7 +204,6 @@ function TrackMap({
     );
   }
 
-  // require after client-only guard
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const RL = require("react-leaflet");
   const { MapContainer, TileLayer, Polyline, Marker } = RL;
@@ -313,69 +243,41 @@ function TrackMap({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution="© OpenStreetMap"
       />
-
-      {/* Polyline strictly from API path */}
       {path.length > 1 && <Polyline positions={path as any} />}
-
-      {/* Begin/End strictly from API path */}
-      {startRef.current && (
-        <Marker position={startRef.current as any} icon={pin("Begin")} />
-      )}
-      {endRef.current && (
-        <Marker position={endRef.current as any} icon={pin("End")} />
-      )}
-
-      {/* Plane strictly from SOCKET current */}
+      {startRef.current && <Marker position={startRef.current as any} icon={pin("Begin")} />}
+      {endRef.current &&   <Marker position={endRef.current as any}   icon={pin("End")} />}
       {current && current.latitude != null && current.longitude != null && (
-        <Marker
-          position={[current.latitude, current.longitude] as any}
-          icon={planeIcon(current.magHeading ?? 0)}
-        />
+        <Marker position={[current.latitude, current.longitude] as any} icon={planeIcon(current.magHeading ?? 0)} />
       )}
     </MapContainer>
   );
 }
+
 function FlagCell({
-  label,
-  value,
-  trueText,
-  falseText,
+  label, value, trueText, falseText,
 }: {
   label: string;
-  value?: number | boolean | null; // accepts 1/0/true/false/null
-  trueText: string; // use "1"
-  falseText: string; // use "0"
+  value?: number | boolean | null;
+  trueText: string;
+  falseText: string;
 }) {
-  // only treat 1/true as ON, 0/false as OFF; everything else is unknown
   const state: "true" | "false" | "unknown" =
-    value === 1 || value === true
-      ? "true"
-      : value === 0 || value === false
-      ? "false"
-      : "unknown";
+    value === 1 || value === true ? "true" : value === 0 || value === false ? "false" : "unknown";
 
   const cls =
-    state === "true"
-      ? "bg-green-50 text-green-800 border-green-300"
-      : state === "false"
-      ? "bg-red-50 text-red-700 border-red-300"
-      : "bg-slate-50 text-slate-600 border-slate-200";
+    state === "true" ? "bg-green-50 text-green-800 border-green-300"
+    : state === "false" ? "bg-red-50 text-red-700 border-red-300"
+    : "bg-slate-50 text-slate-600 border-slate-200";
 
   const dot =
-    state === "true"
-      ? "bg-green-500"
-      : state === "false"
-      ? "bg-red-500"
-      : "bg-slate-400";
+    state === "true" ? "bg-green-500"
+    : state === "false" ? "bg-red-500"
+    : "bg-slate-400";
 
   return (
     <div className="p-2 border border-amber-200 bg-amber-50 rounded-md">
-      {label && (
-        <div className="text-xs font-medium text-slate-700">{label}</div>
-      )}
-      <div
-        className={`mt-1 inline-flex items-center gap-2 px-2 py-1 rounded-lg border ${cls}`}
-      >
+      {label && <div className="text-xs font-medium text-slate-700">{label}</div>}
+      <div className={`mt-1 inline-flex items-center gap-2 px-2 py-1 rounded-lg border ${cls}`}>
         <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
         <span className="text-sm font-semibold">
           {state === "unknown" ? "—" : state === "true" ? trueText : falseText}
@@ -385,40 +287,76 @@ function FlagCell({
   );
 }
 
-// ---- Fetch persisted path for polyline (API) ----
-function useStaticPath(key: FlightKey) {
-  const [staticPoints, setStaticPoints] = useState<FdrPoint[]>([]);
+// ---- Manual loader hook (click to fetch) ----
+function usePathForChart(key: FlightKey) {
+  const [points, setPoints] = useState<FdrPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const acRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const url = `${API_URL}/pilot/path?flightNumber=${encodeURIComponent(
-          key.flightNumber
-        )}&date=${key.date}`;
-        const res = await fetch(url);
-        const json = await res.json();
-        const arr = (json?.path ?? json ?? []) as any[];
+  const load = React.useCallback(async () => {
+    if (acRef.current) acRef.current.abort();
+    const ac = new AbortController();
+    acRef.current = ac;
 
-        const pts: FdrPoint[] = arr
-          .filter((p) => p && p.latitude != null && p.longitude != null)
-          .map((p: any, i: number) => {
-            const ts = p.ts ?? computeTs(p.date ?? key.date, p.utcTime);
-            return { ...p, id: p.id ?? i, ts } as FdrPoint;
-          });
+    setLoading(true);
+    setError(null);
 
-        if (!cancelled) setStaticPoints(pts);
-      } catch (e) {
-        console.error("Failed to fetch static path:", e);
-        if (!cancelled) setStaticPoints([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const res = await fetch(
+        `${API_URL}/pilot/path?flightNumber=${encodeURIComponent(key.flightNumber)}&date=${key.date}`,
+        { signal: ac.signal, cache: 'no-store' }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+      const data = await res.json();
+
+      const arr: any[] = Array.isArray(data?.path) ? data.path : Array.isArray(data) ? data : [];
+
+      const toNum = (v: any) => (v == null ? null : Number(v));
+      const pts: FdrPoint[] = arr.map((p: any, i: number) => ({
+        id: p.id ?? i,
+        ts: typeof p.ts === 'number' ? p.ts : computeTs(p.date ?? key.date, p.utcTime),
+        utcTime: p.utcTime ?? '',
+        date: Number(p.date ?? key.date),
+        flightNumber: String(p.flightNumber ?? key.flightNumber),
+        latitude: toNum(p.latitude),
+        longitude: toNum(p.longitude),
+        pressureAltitude: toNum(p.pressureAltitude),
+        pitchAngle: toNum(p.pitchAngle),
+        rollAngle: toNum(p.rollAngle),
+        magHeading: toNum(p.magHeading),
+        computedAirspeed: toNum(p.computedAirspeed),
+        verticalSpeed: toNum(p.verticalSpeed),
+        flapPosition: toNum(p.flapPosition),
+        gearSelectionUp: toNum(p.gearSelectionUp),
+        ap1Engaged: toNum(p.ap1Engaged),
+        ap2Engaged: toNum(p.ap2Engaged),
+        airGround: toNum(p.airGround),
+      }));
+
+      setPoints(pts);
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return; // normal on unmount/change
+      console.error('fetch /pilot/path failed:', err);
+      setError('Failed to load path.');
+      setPoints([]);
+    } finally {
+      setLoading(false);
+      if (acRef.current === ac) acRef.current = null;
+    }
   }, [key.flightNumber, key.date]);
 
-  return staticPoints;
+  // Clear when key changes
+  useEffect(() => {
+    setPoints([]);
+    setError(null);
+    if (acRef.current) {
+      acRef.current.abort();
+      acRef.current = null;
+    }
+  }, [key.flightNumber, key.date]);
+
+  return { points, load, loading, error };
 }
 
 // ---- Main page ----
@@ -426,201 +364,24 @@ export default function FlightReplayPage() {
   const [flightNumber, setFlightNumber] = useState("122");
   const [date, setDate] = useState(20250324);
 
-  const key = useMemo<FlightKey>(
-    () => ({ flightNumber, date }),
-    [flightNumber, date]
-  );
+  const key = useMemo<FlightKey>(() => ({ flightNumber, date }), [flightNumber, date]);
 
-  // Polyline from API
-  const staticPoints = useStaticPath(key);
+  // Manual-loaded path (used by map + chart)
+  const { points: pathForChart, load: loadPath, loading: loadingPath, error: pathError } =
+    usePathForChart(key);
 
-  // Plane & playback from socket
+  // Socket player
   const { snap, actions } = useSocketPlayer(key);
-
-  // Plane position from socket only
   const planeCurrent: FdrPoint | null = snap?.point ?? null;
 
   const idx = snap?.idx ?? 0;
   const total = snap?.total ?? 0;
-  function FlapNumber({ value }: { value?: number | null }) {
-    // show a numeric value; fallback to 0 if missing
-    const v = value == null ? 0 : Number(value);
-    return (
-      <div className="p-2 border border-amber-200 bg-amber-50 rounded-md">
-        <div className="text-xs font-medium text-slate-700">Flap Position</div>
-        <div className="mt-1 px-2 py-1 rounded-lg border bg-white text-slate-900">
-          <span className="text-sm font-semibold tabular-nums">{v}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Put this near RateSelect
-  function TimelineSlider({
-    idx,
-    total,
-    playing,
-    actions,
-  }: {
-    idx: number;
-    total: number;
-    playing: boolean;
-    actions: {
-      seekIdx: (i: number) => void;
-      pause: () => void;
-      resume: () => void;
-    };
-  }) {
-    const [local, setLocal] = React.useState(idx);
-    const [scrubbing, setScrubbing] = React.useState(false);
-    const wasPlayingRef = React.useRef(false);
-    const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-      null
-    );
-
-    // keep slider in sync when not scrubbing
-    React.useEffect(() => {
-      if (!scrubbing) setLocal(idx);
-    }, [idx, scrubbing]);
-
-    const commit = React.useCallback(
-      (value: number) => {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        // commit once user pauses movement for 120ms
-        debounceRef.current = setTimeout(() => {
-          actions.seekIdx(value);
-        }, 120);
-      },
-      [actions]
-    );
-
-    const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const v = Number(e.target.value);
-      setLocal(v);
-      commit(v);
-    };
-
-    const onPointerDown = () => {
-      setScrubbing(true);
-      wasPlayingRef.current = playing;
-      if (playing) actions.pause(); // pause streaming while scrubbing
-    };
-
-    const onPointerUp = () => {
-      setScrubbing(false);
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-        debounceRef.current = null;
-      }
-      actions.seekIdx(local); // final commit on release
-      if (wasPlayingRef.current) actions.resume();
-    };
-
-    // Reduce event spam for very long flights (~1000 steps max)
-    const step = Math.max(1, Math.floor(total / 1000));
-
-    return (
-      <input
-        type="range"
-        min={0}
-        max={Math.max(0, total - 1)}
-        step={step}
-        value={scrubbing ? local : idx}
-        onChange={onChange}
-        onPointerDown={onPointerDown}
-        onPointerUp={onPointerUp}
-        onMouseDown={onPointerDown}
-        onMouseUp={onPointerUp}
-        onTouchStart={onPointerDown}
-        onTouchEnd={onPointerUp}
-        className="w-full"
-      />
-    );
-  }
-
-  function computeTs(date: number, utcTime?: string) {
-    const y = Math.floor(date / 10000);
-    const m = Math.floor((date % 10000) / 100);
-    const d = date % 100;
-    const [hh, mm, ss] = (utcTime || "00:00:00")
-      .split(":")
-      .map((n) => parseInt(n, 10) || 0);
-    return Date.UTC(y, m - 1, d, hh, mm, ss);
-  }
-  function usePathForChart(key: FlightKey) {
-    const [points, setPoints] = useState<FdrPoint[]>([]);
-
-    useEffect(() => {
-      const ac = new AbortController();
-
-      (async () => {
-        try {
-          const res = await fetch(
-            `${API_URL}/pilot/path?flightNumber=${encodeURIComponent(
-              key.flightNumber
-            )}&date=${key.date}`,
-            { signal: ac.signal }
-          );
-          const data = await res.json();
-          const arr: any[] = Array.isArray(data?.path)
-            ? data.path
-            : Array.isArray(data)
-            ? data
-            : [];
-
-          const toNum = (v: any) =>
-            v === null || v === undefined ? null : Number(v);
-
-          const pts: FdrPoint[] = arr.map((p: any, i: number) => {
-            const ts =
-              typeof p.ts === "number"
-                ? p.ts
-                : computeTs(p.date ?? key.date, p.utcTime);
-            return {
-              id: p.id ?? i,
-              ts,
-              utcTime: p.utcTime ?? "",
-              date: Number(p.date ?? key.date),
-              flightNumber: String(p.flightNumber ?? key.flightNumber),
-              latitude: toNum(p.latitude),
-              longitude: toNum(p.longitude),
-              pressureAltitude: toNum(p.pressureAltitude),
-              pitchAngle: toNum(p.pitchAngle),
-              rollAngle: toNum(p.rollAngle),
-              magHeading: toNum(p.magHeading),
-              computedAirspeed: toNum(p.computedAirspeed),
-              verticalSpeed: toNum(p.verticalSpeed),
-              flapPosition: toNum(p.flapPosition),
-              gearSelectionUp: toNum(p.gearSelectionUp),
-              ap1Engaged: toNum(p.ap1Engaged),
-              ap2Engaged: toNum(p.ap2Engaged),
-              airGround: toNum(p.airGround),
-            };
-          });
-
-          // Keep server order; your API already returns start→end by id
-          setPoints(pts);
-        } catch (err: any) {
-          if (err?.name !== "CanceledError" && err?.code !== "ERR_CANCELED") {
-            console.error("Axios /pilot/path failed:", err);
-            setPoints([]);
-          }
-        }
-      })();
-
-      return () => ac.abort();
-    }, [key.flightNumber, key.date]);
-
-    return points;
-  }
-  // non-realtime path just for chart (and you can also pass it to the map)
-  const pathForChart = usePathForChart(key);
   const markerTs = planeCurrent?.ts ?? null;
 
   const chartData = useMemo(
     () =>
-      pathForChart.map((p) => ({
-        ts: p.ts, // numeric epoch ms
+      (pathForChart ?? []).map((p) => ({
+        ts: p.ts,
         alt: p.pressureAltitude ?? 0,
         id: p.id,
       })),
@@ -645,10 +406,20 @@ export default function FlightReplayPage() {
               type="number"
               className="px-3 py-1.5 border rounded-xl w-36"
               value={String(date)}
-              onChange={(e) =>
-                setDate(e.target.value === "" ? 0 : Number(e.target.value))
-              }
+              onChange={(e) => setDate(e.target.value === "" ? 0 : Number(e.target.value))}
             />
+
+            <button
+              onClick={loadPath}
+              disabled={loadingPath}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 text-white px-4 py-2
+                         hover:bg-indigo-500 disabled:opacity-50"
+              title="Fetch path from /pilot/path"
+            >
+              {loadingPath ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {loadingPath ? 'Loading…' : 'Load path'}
+            </button>
+
             <span className="text-sm text-slate-500">Server: {NS_URL}</span>
           </div>
         </div>
@@ -659,48 +430,26 @@ export default function FlightReplayPage() {
         <div className="bg-white rounded-2xl shadow p-4">
           <div className="font-medium mb-2 justify-center flex">Controls</div>
           <div className="flex items-center gap-2 justify-center">
-            <button
-              onClick={actions.back5}
-              className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2"
-            >
+            <button onClick={actions.back5} className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2">
               <Rewind className="h-4 w-4" /> 5s
             </button>
             {snap?.playing ? (
-              <button
-                onClick={actions.pause}
-                className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2"
-              >
-                <Pause className="h-4 w-4" />
-                Pause
+              <button onClick={actions.pause} className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2">
+                <Pause className="h-4 w-4" /> Pause
               </button>
             ) : (
-              <button
-                onClick={actions.resume}
-                className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2"
-              >
-                <Play className="h-4 w-4" />
-                Resume
+              <button onClick={actions.resume} className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2">
+                <Play className="h-4 w-4" /> Resume
               </button>
             )}
-            <button
-              onClick={actions.fwd5}
-              className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2"
-            >
+            <button onClick={actions.fwd5} className="px-10 py-2 rounded-xl border hover:bg-slate-50 flex items-center gap-2">
               5s <FastForward className="h-4 w-4" />
             </button>
           </div>
 
           <div className="mt-3 text-sm text-slate-600 space-y-1 flex items-center justify-center flex-col">
-            <div>
-              Status: <b>{snap?.playing ? "▶️ Playing" : "⏸️ Paused"}</b>
-            </div>
-            <div>
-              Rate:{" "}
-              <RateSelect
-                value={snap?.rate ?? 1}
-                onChange={(v) => actions.setRate(v)}
-              />
-            </div>
+            <div> Status: <b>{snap?.playing ? "▶️ Playing" : "⏸️ Paused"}</b> </div>
+            <div> Rate: <RateSelect value={snap?.rate ?? 1} onChange={(v) => actions.setRate(v)} /> </div>
           </div>
         </div>
 
@@ -711,56 +460,34 @@ export default function FlightReplayPage() {
               <MapIcon className="h-4 w-4" />
               Trajectory
             </div>
-            <TrackMap
-              pathPoints={staticPoints}
-              current={planeCurrent ?? undefined}
-            />
+            <TrackMap pathPoints={pathForChart ?? []} current={planeCurrent ?? undefined} />
+            {pathError && (
+              <div className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-1.5">
+                {pathError}
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-2xl shadow p-4">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm text-slate-600">
-                Time: <b>{fmtTime(planeCurrent?.ts)}</b>
-              </div>
-              <div className="text-sm text-slate-600">
-                Alt: <b>{planeCurrent?.pressureAltitude ?? 0}</b> ft
-              </div>
+              <div className="text-sm text-slate-600">Time: <b>{fmtTime(planeCurrent?.ts)}</b></div>
+              <div className="text-sm text-slate-600">Alt: <b>{planeCurrent?.pressureAltitude ?? 0}</b> ft</div>
             </div>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={chartData}
-                  margin={{ left: 12, right: 12, top: 8, bottom: 8 }}
-                >
+                <LineChart data={chartData} margin={{ left: 12, right: 12, top: 8, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  {/* Use numeric ts + format ticks to HH:MM:SS */}
-                  <XAxis
-                    dataKey="ts"
-                    minTickGap={24}
-                    tickFormatter={(v) => fmtTime(v)}
-                    type="number"
-                    domain={["dataMin", "dataMax"]}
-                  />
+                  <XAxis dataKey="ts" minTickGap={24} tickFormatter={(v) => fmtTime(v)} type="number" domain={["dataMin", "dataMax"]} />
                   <YAxis width={46} />
-                  <Tooltip
-                    labelFormatter={(v) => fmtTime(Number(v))}
-                    formatter={(val) => [val, "Alt (ft)"]}
-                  />
+                  <Tooltip labelFormatter={(v) => fmtTime(Number(v))} formatter={(val) => [val, "Alt (ft)"]} />
                   <Line type="monotone" dataKey="alt" dot={false} />
-
-                  {/* Vertical cursor showing “where the plane is” */}
                   {markerTs != null && (
                     <ReferenceLine
                       x={markerTs}
-                      stroke="#334155" // slate-700
+                      stroke="#334155"
                       strokeDasharray="4 4"
                       strokeWidth={2}
-                      label={{
-                        value: "Now",
-                        position: "top",
-                        fill: "#334155",
-                        fontSize: 12,
-                      }}
+                      label={{ value: "Now", position: "top", fill: "#334155", fontSize: 12 }}
                     />
                   )}
                 </LineChart>
@@ -773,77 +500,37 @@ export default function FlightReplayPage() {
                 idx={idx}
                 total={total}
                 playing={!!snap?.playing}
-                actions={{
-                  seekIdx: actions.seekIdx,
-                  pause: actions.pause,
-                  resume: actions.resume,
-                }}
+                actions={{ seekIdx: actions.seekIdx, pause: actions.pause, resume: actions.resume }}
               />
-
-              <div className="text-xs text-slate-600 w-28 text-right">
-                {idx + 1} / {total || 0}
-              </div>
+              <div className="text-xs text-slate-600 w-28 text-right">{idx + 1} / {total || 0}</div>
             </div>
           </div>
 
           <div className="bg-white rounded-2xl shadow p-4">
             <div className="font-medium mb-2">Current Point</div>
             <div className="text-sm grid grid-cols-5 gap-5">
-              <Altimeter
-                altitude={planeCurrent?.pressureAltitude ?? 0}
-                showBox={false}
-              />
-              <HeadingIndicator
-                heading={planeCurrent?.magHeading ?? 0}
-                showBox={false}
-              />
+              <Altimeter altitude={planeCurrent?.pressureAltitude ?? 0} showBox={false} />
+              <HeadingIndicator heading={planeCurrent?.magHeading ?? 0} showBox={false} />
               <div className="relative">
-                <Airspeed
-                  speed={planeCurrent?.computedAirspeed ?? 0}
-                  showBox={false}
-                />
+                <Airspeed speed={planeCurrent?.computedAirspeed ?? 0} showBox={false} />
                 <div className="absolute top-[132px] left-[104px] text-xs text-white z-[99999]">
-                  <h1 className="text-white text-3xl  z-[99999">
-                    {planeCurrent?.computedAirspeed}
-                  </h1>
+                  <h1 className="text-white text-3xl z-[99999]">{planeCurrent?.computedAirspeed}</h1>
                 </div>
               </div>
-              <Variometer
-                vario={planeCurrent?.verticalSpeed ?? 0}
-                showBox={false}
-              />
-              <AttitudeIndicator
-                roll={planeCurrent?.rollAngle}
-                pitch={planeCurrent?.pitchAngle}
-                showBox={false}
-              />
+              <Variometer vario={planeCurrent?.verticalSpeed ?? 0} showBox={false} />
+              <AttitudeIndicator roll={planeCurrent?.rollAngle} pitch={planeCurrent?.pitchAngle} showBox={false} />
             </div>
             <div className="grid grid-cols-5">
-              <FlagCell
-                label="Gear Selection Up"
-                value={planeCurrent?.gearSelectionUp}
-                trueText="1"
-                falseText="0"
-              />
-              <FlagCell
-                label="A/P 1 Engaged"
-                value={planeCurrent?.ap1Engaged}
-                trueText="1"
-                falseText="0"
-              />
-              <FlagCell
-                label="A/P 2 Engaged"
-                value={planeCurrent?.ap2Engaged}
-                trueText="1"
-                falseText="0"
-              />
-              <FlagCell
-                label="Air/Ground"
-                value={planeCurrent?.airGround}
-                trueText="1" // 1 = AIR (if that's how your backend encodes it)
-                falseText="0" // 0 = GROUND
-              />
-              <FlapNumber value={planeCurrent?.flapPosition} />
+              <FlagCell label="Gear Selection Up" value={planeCurrent?.gearSelectionUp} trueText="1" falseText="0" />
+              <FlagCell label="A/P 1 Engaged" value={planeCurrent?.ap1Engaged} trueText="1" falseText="0" />
+              <FlagCell label="A/P 2 Engaged" value={planeCurrent?.ap2Engaged} trueText="1" falseText="0" />
+              <FlagCell label="Air/Ground" value={planeCurrent?.airGround} trueText="1" falseText="0" />
+              <div className="p-2 border border-amber-200 bg-amber-50 rounded-md">
+                <div className="text-xs font-medium text-slate-700">Flap Position</div>
+                <div className="mt-1 px-2 py-1 rounded-lg border bg-white text-slate-900">
+                  <span className="text-sm font-semibold tabular-nums">{planeCurrent?.flapPosition ?? 0}</span>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -852,24 +539,85 @@ export default function FlightReplayPage() {
   );
 }
 
-function RateSelect({
-  value,
-  onChange,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-}) {
+function RateSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
   return (
-    <select
-      className="ml-2 px-2 py-1 border rounded-lg"
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-    >
+    <select className="ml-2 px-2 py-1 border rounded-lg" value={value} onChange={(e) => onChange(Number(e.target.value))}>
       {[0.5, 1, 2, 4, 8].map((v) => (
         <option key={v} value={v}>
           {v}x
         </option>
       ))}
     </select>
+  );
+}
+
+// Slider component (unchanged)
+function TimelineSlider({
+  idx, total, playing, actions,
+}: {
+  idx: number;
+  total: number;
+  playing: boolean;
+  actions: { seekIdx: (i: number) => void; pause: () => void; resume: () => void };
+}) {
+  const [local, setLocal] = React.useState(idx);
+  const [scrubbing, setScrubbing] = React.useState(false);
+  const wasPlayingRef = React.useRef(false);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (!scrubbing) setLocal(idx);
+  }, [idx, scrubbing]);
+
+  const commit = React.useCallback(
+    (value: number) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        actions.seekIdx(value);
+      }, 120);
+    },
+    [actions]
+  );
+
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = Number(e.target.value);
+    setLocal(v);
+    commit(v);
+  };
+
+  const onPointerDown = () => {
+    setScrubbing(true);
+    wasPlayingRef.current = playing;
+    if (playing) actions.pause();
+  };
+
+  const onPointerUp = () => {
+    setScrubbing(false);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = null;
+    }
+    actions.seekIdx(local);
+    if (wasPlayingRef.current) actions.resume();
+  };
+
+  const step = Math.max(1, Math.floor(total / 1000));
+
+  return (
+    <input
+      type="range"
+      min={0}
+      max={Math.max(0, total - 1)}
+      step={step}
+      value={scrubbing ? local : idx}
+      onChange={onChange}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onMouseDown={onPointerDown}
+      onMouseUp={onPointerUp}
+      onTouchStart={onPointerDown}
+      onTouchEnd={onPointerUp}
+      className="w-full"
+    />
   );
 }
